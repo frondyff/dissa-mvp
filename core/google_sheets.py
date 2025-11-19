@@ -5,10 +5,6 @@ import pandas as pd
 
 
 def _get_gsheet_client():
-    """
-    Create an authenticated gspread client using the service account
-    stored in Streamlit secrets under [gcp_service_account].
-    """
     creds_info = st.secrets["gcp_service_account"]
 
     creds = Credentials.from_service_account_info(
@@ -21,28 +17,27 @@ def _get_gsheet_client():
 
 def _open_spreadsheet(client):
     """
-    Open the spreadsheet using either a plain ID or a full URL,
-    depending on what the user put in secrets.
+    Open the spreadsheet using whatever is in [sheets].sheet_id:
+    - full URL
+    - a partial URL containing '/d/<ID>/...'
+    - or just the raw <ID>
     """
-    sheet_cfg = st.secrets["sheets"]["sheet_id"]
+    raw = st.secrets["sheets"]["sheet_id"].strip()
 
-    # Small debug help (you can remove later if you want)
-    # st.write("Debug sheet_id from secrets:", sheet_cfg)
+    # If it looks like a full URL, use open_by_url
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return client.open_by_url(raw)
 
-    if "https://docs.google.com" in sheet_cfg:
-        # User pasted full URL
-        sh = client.open_by_url(sheet_cfg)
-    else:
-        # User pasted just the key
-        sh = client.open_by_key(sheet_cfg)
+    # If it contains '/d/', extract the ID between /d/ and the next '/'
+    if "/d/" in raw:
+        key = raw.split("/d/")[1].split("/")[0]
+        return client.open_by_key(key)
 
-    return sh
+    # Otherwise assume it's just the plain key
+    return client.open_by_key(raw)
 
 
 def append_interaction_row(row):
-    """
-    Append a single interaction row to the 'interactions' worksheet.
-    """
     client = _get_gsheet_client()
     sh = _open_spreadsheet(client)
     ws = sh.worksheet("interactions")
@@ -50,9 +45,6 @@ def append_interaction_row(row):
 
 
 def load_interactions_df() -> pd.DataFrame:
-    """
-    Load all interaction rows from Google Sheets into a pandas DataFrame.
-    """
     client = _get_gsheet_client()
     sh = _open_spreadsheet(client)
     ws = sh.worksheet("interactions")
