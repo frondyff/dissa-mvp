@@ -1,0 +1,3 @@
+interaction_id,timestamp,site,age_group,language,housing_status,needs,service_ids_kept,service_ids_removed,num_services_kept
+2025-11-19T12:43:18_1,2025-11-19T12:43:18,NFCM,18-29,Cree,Not specified,food;clothing;culture,37,,1
+2025-11-19T12:43:56_3,2025-11-19T12:43:56,NFCM,18-29,Cree,Not specified,food;health,3;48;49,,3
