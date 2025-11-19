@@ -347,7 +347,16 @@ if mode == "Front desk tool":
 # =====================================================================
 else:
     st.subheader("Analytics dashboard – anonymous usage trends")
-
+    
+        # --- DEBUG: Show what secrets are being read ---
+    try:
+        st.write("Debug service account email:", st.secrets["gcp_service_account"]["client_email"])
+        st.write("Debug sheet_id:", st.secrets["sheets"]["sheet_id"])
+    except Exception as e:
+        st.error("Secrets read error:")
+        st.code(repr(e))
+    # ------------------------------------------------
+    
     try:
         df = load_interactions_df()
     except Exception as e:
