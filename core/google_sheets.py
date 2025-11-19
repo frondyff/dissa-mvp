@@ -17,24 +17,11 @@ def _get_gsheet_client():
 
 def _open_spreadsheet(client):
     """
-    Open the spreadsheet using whatever is in [sheets].sheet_id:
-    - full URL
-    - a partial URL containing '/d/<ID>/...'
-    - or just the raw <ID>
+    Open the spreadsheet using the full URL stored in [sheets].sheet_id.
     """
-    raw = st.secrets["sheets"]["sheet_id"].strip()
-
-    # If it looks like a full URL, use open_by_url
-    if raw.startswith("http://") or raw.startswith("https://"):
-        return client.open_by_url(raw)
-
-    # If it contains '/d/', extract the ID between /d/ and the next '/'
-    if "/d/" in raw:
-        key = raw.split("/d/")[1].split("/")[0]
-        return client.open_by_key(key)
-
-    # Otherwise assume it's just the plain key
-    return client.open_by_key(raw)
+    url = st.secrets["sheets"]["sheet_id"].strip()
+    # url must be like "https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0"
+    return client.open_by_url(url)
 
 
 def append_interaction_row(row):
