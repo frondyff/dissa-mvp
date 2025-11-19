@@ -1,3 +1,5 @@
+# core/google_sheets.py
+
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -38,11 +40,13 @@ def _extract_sheet_key(raw: str) -> str:
 
 
 def _open_spreadsheet(client):
-    """Open the spreadsheet using the parsed key."""
+    """Open the spreadsheet using the parsed key (NOT by URL)."""
     raw = st.secrets["sheets"]["sheet_id"]
     key = _extract_sheet_key(raw)
-    # Optional: uncomment while debugging
-    # st.write("DEBUG parsed sheet key:", key)
+
+    # DEBUG so we know this code is really running in Streamlit Cloud
+    st.write("DEBUG parsed Google Sheet key used by open_by_key():", key)
+
     return client.open_by_key(key)
 
 
