@@ -371,6 +371,36 @@ else:
         client = gspread.authorize(creds)
 
         raw = st.secrets["sheets"]["sheet_id"].strip()
+
+        # NEW: handle both full URL and bare key
+        if raw.startswith("http"):
+            st.write("DEBUG: treating sheet_id as URL")
+            sh = client.open_by_url(raw)
+            key = "opened_by_url"
+        else:
+            st.write("DEBUG: treating sheet_id as bare key")
+            key = raw
+            sh = client.open_by_key(key)
+
+        st.write("DEBUG parsed key / mode:", key)
+        st.write("DEBUG: opened spreadsheet OK. Title:", sh.title)
+
+        ws = sh.worksheet("interactions")
+        st.write("DEBUG: worksheet title:", ws.title)
+
+        records = ws.get_all_records()
+        st.write("DEBUG: rows found:", len(records))
+
+        df = pd.DataFrame(records)
+    try:
+        creds_info = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(
+            creds_info,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(creds)
+
+        raw = st.secrets["sheets"]["sheet_id"].strip()
         if "/d/" in raw:
             key = raw.split("/d/")[1].split("/")[0]
         else:
