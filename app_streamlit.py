@@ -1,19 +1,16 @@
-import streamlit as st
-from datetime import datetime
 import base64
-import pandas as pd
-import streamlit.components.v1 as components  # ok if unused
-import os
+from datetime import datetime
 
 import gspread
+import pandas as pd
+import streamlit as st
 from google.oauth2.service_account import Credentials
 
 from core.retrieval import load_services, retrieve_services
 from core.handout_generator import generate_handout
 from core.logger import log_interaction
 from core.pdf_generator import generate_pdf
-# optional old helper – not used now, but you can keep it
-# from core.google_sheets import load_interactions_df
+
 
 # ---------- Load data ----------
 SERVICES_DF = load_services()
@@ -30,12 +27,12 @@ if "step" not in st.session_state:
 
 defaults = {
     "visitor_context": None,        # final context for handout
-    "visitor_context_form": None,   # context used when generating services
+    "visitor_context_form": None,   # context when generating services
     "kept_services": [],
     "removed_ids": [],
     "handout_text": "",
     "services_for_review": [],
-    "review_ready": False,          # did we already generate the service list?
+    "review_ready": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -120,6 +117,31 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# =====================================================================
+# HELPER: load interactions from Google Sheets
+# =====================================================================
+def load_interactions_from_sheets() -> pd.DataFrame:
+    """Return interactions log as a DataFrame, using service-account auth."""
+    creds_info = st.secrets["gcp_service_account"]
+    creds = Credentials.from_service_account_info(
+        creds_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    client = gspread.authorize(creds)
+
+    raw = st.secrets["sheets"]["sheet_id"].strip()
+    if "/d/" in raw:
+        key = raw.split("/d/")[1].split("/")[0]
+    else:
+        key = raw
+
+    sh = client.open_by_key(key)
+    ws = sh.worksheet("interactions")
+    records = ws.get_all_records()
+    return pd.DataFrame(records)
+
+
 # =====================================================================
 # MODE 1: FRONT DESK TOOL
 # =====================================================================
@@ -156,7 +178,8 @@ if mode == "Front desk tool":
         # ----- Key needs as tiles -----
         st.markdown('<h4 class="section-title">Key needs</h4>', unsafe_allow_html=True)
         st.caption(
-            "Click the tiles that match what the visitor is looking for. You can select more than one."
+            "Click the tiles that match what the visitor is looking for. "
+            "You can select more than one."
         )
 
         NEED_OPTIONS = [
@@ -173,7 +196,7 @@ if mode == "Front desk tool":
         selected_needs = []
         cols_per_row = 3
         for i in range(0, len(NEED_OPTIONS), cols_per_row):
-            row = NEED_OPTIONS[i: i + cols_per_row]
+            row = NEED_OPTIONS[i : i + cols_per_row]
             cols = st.columns(len(row))
             for col, opt in zip(cols, row):
                 with col:
@@ -189,7 +212,6 @@ if mode == "Front desk tool":
         st.write("")
         generate_clicked = st.button("Generate service list")
 
-        # ---- When "Generate service list" is clicked, compute & store to session ----
         if generate_clicked:
             if not selected_needs:
                 st.warning("Please select at least one need by clicking the tiles above.")
@@ -201,7 +223,9 @@ if mode == "Front desk tool":
                     "needs": selected_needs,
                 }
 
-                services = retrieve_services(SERVICES_DF, selected_needs, language, age_group)
+                services = retrieve_services(
+                    SERVICES_DF, selected_needs, language, age_group
+                )
 
                 if not services:
                     st.error("No matching services found. Try changing needs or language.")
@@ -212,7 +236,7 @@ if mode == "Front desk tool":
                     st.session_state["services_for_review"] = services
                     st.session_state["visitor_context_form"] = visitor_context
 
-        # ---- Show review section whenever we have services stored ----
+        # ---- Review section ----
         if st.session_state["review_ready"] and st.session_state["services_for_review"]:
             services = st.session_state["services_for_review"]
             visitor_context = st.session_state["visitor_context_form"]
@@ -243,8 +267,6 @@ if mode == "Front desk tool":
                 if not kept_services:
                     st.warning("At least one service should be selected.")
                 else:
-                    st.write(f"Generating handout for {len(kept_services)} services...")
-
                     handout_text = generate_handout(visitor_context, kept_services)
                     log_interaction(visitor_context, kept_services, removed_ids)
 
@@ -281,8 +303,8 @@ if mode == "Front desk tool":
         st.markdown("### Handout text (formatted)")
         st.markdown(handout_text)
 
+        # PDF generation + download
         pdf_bytes = generate_pdf(handout_text, vc)
-        st.write(f"PDF generated with size: **{len(pdf_bytes)} bytes**")
 
         st.download_button(
             label="📄 Download PDF",
@@ -291,6 +313,7 @@ if mode == "Front desk tool":
             mime="application/pdf",
         )
 
+        # Inline preview (best-effort)
         try:
             b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
             pdf_iframe = f"""
@@ -302,15 +325,13 @@ if mode == "Front desk tool":
                     type="application/pdf"
                 ></iframe>
             """
-            st.markdown("### Preview & print (may be hidden by some browser settings)")
+            st.markdown("### Preview & print")
             st.markdown(pdf_iframe, unsafe_allow_html=True)
-        except Exception as e:
-            st.warning(f"Preview could not be rendered (download still works). Error: {e}")
-
-        st.caption(
-            "If you don't see a preview above, use the **Download PDF** button and print "
-            "the file from your PDF viewer."
-        )
+        except Exception:
+            st.caption(
+                "Preview could not be rendered in the browser. "
+                "Use the **Download PDF** button and print from your PDF viewer."
+            )
 
         st.markdown("### Plain text (for copy/paste)")
         st.text_area(
@@ -319,188 +340,199 @@ if mode == "Front desk tool":
             height=260,
         )
 
-        st.info(
-            "Tip: You can always rely on the **Download PDF** button. "
-            "Inline preview may be blocked by some browsers or Streamlit settings."
-        )
-
         st.write("")
         if st.button("Start new visitor"):
             st.session_state.clear()
             st.session_state["step"] = "form"
             st.rerun()
 
+
 # =====================================================================
-# MODE 2: ANALYTICS DASHBOARD (from Google Sheets)
+# MODE 2: ANALYTICS DASHBOARD
 # =====================================================================
 else:
     st.subheader("Analytics dashboard – anonymous usage trends")
 
-    # ---- Debug: show what we think the secrets are ----
     try:
-        svc_email = st.secrets["gcp_service_account"]["client_email"]
-        raw_sheet_id = st.secrets["sheets"]["sheet_id"]
-        st.write("Debug service account email:", svc_email)
-        st.write("Debug sheet_id (raw):", raw_sheet_id)
+        df = load_interactions_from_sheets()
     except Exception as e:
-        st.error("Secrets read error (gcp_service_account / sheets.sheet_id):")
-        st.code(repr(e))
-
-    # ---- Connect to Google Sheets directly ----
-    try:
-        creds_info = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(
-            creds_info,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        client = gspread.authorize(creds)
-
-        raw = st.secrets["sheets"]["sheet_id"].strip()
-
-        if raw.startswith("http"):
-            st.write("DEBUG: treating sheet_id as URL")
-            sh = client.open_by_url(raw)
-            key_display = "opened_by_url"
-        else:
-            st.write("DEBUG: treating sheet_id as bare key")
-            sh = client.open_by_key(raw)
-            key_display = raw
-
-        st.write("DEBUG parsed key / mode:", key_display)
-        st.write("DEBUG: opened spreadsheet OK. Title:", sh.title)
-
-        ws = sh.worksheet("interactions")
-        st.write("DEBUG: worksheet title:", ws.title)
-
-        records = ws.get_all_records()
-        st.write("DEBUG: rows found:", len(records))
-
-        df = pd.DataFrame(records)
-
-    except Exception as e:
-        st.error("Direct Google Sheets test failed:")
-        st.code(repr(e))
+        st.error("Could not load analytics data from Google Sheets.")
+        st.caption(str(e))
     else:
-        # ---------- Analytics logic using df ----------
         if df.empty:
             st.info(
                 "No interactions have been logged yet. "
                 "As front desk staff generate handouts, data will appear here."
             )
         else:
+            # ---------- Timestamp + time filter ----------
             if "timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-            total_interactions = len(df)
-            date_min = df["timestamp"].min() if "timestamp" in df.columns else None
-            date_max = df["timestamp"].max() if "timestamp" in df.columns else None
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total handouts generated", total_interactions)
-            with col2:
-                st.metric(
-                    "First interaction",
-                    date_min.strftime("%Y-%m-%d") if date_min is not None else "N/A",
-                )
-            with col3:
-                st.metric(
-                    "Most recent",
-                    date_max.strftime("%Y-%m-%d") if date_max is not None else "N/A",
+                st.markdown("#### Time filter")
+                period = st.selectbox(
+                    "Show data for:",
+                    ["All time", "Last 7 days", "Last 30 days", "Last 90 days"],
+                    index=2,
                 )
 
-            st.markdown("---")
-
-            # --- Top needs ---
-            st.markdown("### Top needs selected")
-
-            if "needs" in df.columns:
-                needs_df = df.copy()
-                needs_df["needs_list"] = needs_df["needs"].fillna("").astype(str).str.split(";")
-                needs_exploded = needs_df.explode("needs_list")
-                needs_exploded = needs_exploded[needs_exploded["needs_list"] != ""]
-
-                if needs_exploded.empty:
-                    st.caption("No needs data recorded yet.")
+                if period == "All time":
+                    filtered_df = df.copy()
                 else:
-                    needs_counts = needs_exploded["needs_list"].value_counts().head(10)
-
-                    col_left, col_right = st.columns([2, 1])
-                    with col_left:
-                        st.bar_chart(needs_counts)
-                    with col_right:
-                        st.write("Top needs (by count):")
-                        st.table(needs_counts.to_frame("count"))
-            else:
-                st.caption("Column 'needs' not found in sheet.")
-
-            st.markdown("---")
-
-            # --- Top services used ---
-            st.markdown("### Top services included in handouts")
-
-            if "service_ids_kept" in df.columns:
-                svc_df = df.copy()
-                svc_df["service_ids_kept_list"] = (
-                    svc_df["service_ids_kept"].fillna("").astype(str).str.split(";")
-                )
-                svc_exploded = svc_df.explode("service_ids_kept_list")
-                svc_exploded = svc_exploded[svc_exploded["service_ids_kept_list"] != ""]
-
-                if svc_exploded.empty:
-                    st.caption("No services have been logged yet.")
-                else:
-                    svc_exploded["service_ids_kept_list"] = pd.to_numeric(
-                        svc_exploded["service_ids_kept_list"], errors="coerce"
-                    )
-                    svc_exploded = svc_exploded.dropna(subset=["service_ids_kept_list"])
-
-                    id_to_name = {
-                        int(row["id"]): row["name"]
-                        for _, row in SERVICES_DF.iterrows()
+                    days_lookup = {
+                        "Last 7 days": 7,
+                        "Last 30 days": 30,
+                        "Last 90 days": 90,
                     }
-
-                    svc_exploded["service_name"] = svc_exploded[
-                        "service_ids_kept_list"
-                    ].map(id_to_name)
-                    svc_exploded = svc_exploded.dropna(subset=["service_name"])
-
-                    svc_counts = svc_exploded["service_name"].value_counts().head(10)
-
-                    col_left2, col_right2 = st.columns([2, 1])
-                    with col_left2:
-                        st.bar_chart(svc_counts)
-                    with col_right2:
-                        st.write("Top services (by count):")
-                        st.table(svc_counts.to_frame("count"))
+                    days = days_lookup[period]
+                    cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                    filtered_df = df[df["timestamp"] >= cutoff].copy()
             else:
-                st.caption("Column 'service_ids_kept' not found in sheet.")
+                filtered_df = df.copy()
 
-            st.markdown("---")
-
-            # --- Breakdown by housing or age ---
-            st.markdown("### Context breakdown")
-
-            col_h1, col_h2 = st.columns(2)
-            with col_h1:
-                if "housing_status" in df.columns:
-                    st.markdown("**By housing situation**")
-                    housing_counts = df["housing_status"].value_counts()
-                    st.bar_chart(housing_counts)
+            if filtered_df.empty:
+                st.info(
+                    "No interactions match the selected time period. "
+                    "Try a wider range or 'All time'."
+                )
+            else:
+                # Top-level KPIs (using filtered data)
+                total_interactions = len(filtered_df)
+                if "timestamp" in filtered_df.columns:
+                    date_min = filtered_df["timestamp"].min()
+                    date_max = filtered_df["timestamp"].max()
                 else:
-                    st.caption("Column 'housing_status' not found.")
-            with col_h2:
-                if "age_group" in df.columns:
-                    st.markdown("**By age group**")
-                    age_counts = df["age_group"].value_counts()
-                    st.bar_chart(age_counts)
+                    date_min = date_max = None
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total handouts generated", total_interactions)
+                with col2:
+                    st.metric(
+                        "First interaction in view",
+                        date_min.strftime("%Y-%m-%d") if date_min is not None else "N/A",
+                    )
+                with col3:
+                    st.metric(
+                        "Most recent in view",
+                        date_max.strftime("%Y-%m-%d") if date_max is not None else "N/A",
+                    )
+
+                # Download filtered CSV
+                csv_bytes = filtered_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="⬇️ Download filtered data (CSV)",
+                    data=csv_bytes,
+                    file_name="dissa_interactions_filtered.csv",
+                    mime="text/csv",
+                )
+
+                st.markdown("---")
+
+                # --- Top needs ---
+                st.markdown("### Top needs selected")
+
+                if "needs" in filtered_df.columns:
+                    needs_df = filtered_df.copy()
+                    needs_df["needs_list"] = (
+                        needs_df["needs"].fillna("").astype(str).str.split(";")
+                    )
+                    needs_exploded = needs_df.explode("needs_list")
+                    needs_exploded = needs_exploded[
+                        needs_exploded["needs_list"] != ""
+                    ]
+
+                    if needs_exploded.empty:
+                        st.caption("No needs data recorded yet.")
+                    else:
+                        needs_counts = (
+                            needs_exploded["needs_list"].value_counts().head(10)
+                        )
+
+                        col_left, col_right = st.columns([2, 1])
+                        with col_left:
+                            st.bar_chart(needs_counts)
+                        with col_right:
+                            st.write("Top needs (by count):")
+                            st.table(needs_counts.to_frame("count"))
                 else:
-                    st.caption("Column 'age_group' not found.")
+                    st.caption("Column 'needs' not found in sheet.")
 
-            st.markdown("#### Raw log preview (first 20 rows)")
-            st.dataframe(df.head(20))
+                st.markdown("---")
 
-# ---------- Footer on all pages ----------
+                # --- Top services used ---
+                st.markdown("### Top services included in handouts")
+
+                if "service_ids_kept" in filtered_df.columns:
+                    svc_df = filtered_df.copy()
+                    svc_df["service_ids_kept_list"] = (
+                        svc_df["service_ids_kept"].fillna("").astype(str).str.split(";")
+                    )
+                    svc_exploded = svc_df.explode("service_ids_kept_list")
+                    svc_exploded = svc_exploded[
+                        svc_exploded["service_ids_kept_list"] != ""
+                    ]
+
+                    if svc_exploded.empty:
+                        st.caption("No services have been logged yet.")
+                    else:
+                        svc_exploded["service_ids_kept_list"] = pd.to_numeric(
+                            svc_exploded["service_ids_kept_list"], errors="coerce"
+                        )
+                        svc_exploded = svc_exploded.dropna(
+                            subset=["service_ids_kept_list"]
+                        )
+
+                        id_to_name = {
+                            int(row["id"]): row["name"]
+                            for _, row in SERVICES_DF.iterrows()
+                        }
+
+                        svc_exploded["service_name"] = svc_exploded[
+                            "service_ids_kept_list"
+                        ].map(id_to_name)
+                        svc_exploded = svc_exploded.dropna(subset=["service_name"])
+
+                        svc_counts = (
+                            svc_exploded["service_name"].value_counts().head(10)
+                        )
+
+                        col_left2, col_right2 = st.columns([2, 1])
+                        with col_left2:
+                            st.bar_chart(svc_counts)
+                        with col_right2:
+                            st.write("Top services (by count):")
+                            st.table(svc_counts.to_frame("count"))
+                else:
+                    st.caption("Column 'service_ids_kept' not found in sheet.")
+
+                st.markdown("---")
+
+                # --- Context breakdown ---
+                st.markdown("### Context breakdown")
+
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    if "housing_status" in filtered_df.columns:
+                        st.markdown("**By housing situation**")
+                        housing_counts = filtered_df["housing_status"].value_counts()
+                        st.bar_chart(housing_counts)
+                    else:
+                        st.caption("Column 'housing_status' not found.")
+
+                with col_h2:
+                    if "age_group" in filtered_df.columns:
+                        st.markdown("**By age group**")
+                        age_counts = filtered_df["age_group"].value_counts()
+                        st.bar_chart(age_counts)
+                    else:
+                        st.caption("Column 'age_group' not found.")
+
+                st.markdown("#### Raw log preview (first 20 rows)")
+                st.dataframe(filtered_df.head(20))
+
+
+# ---------- Footer ----------
 st.markdown("---")
 st.markdown(
     '<div class="dissa-footer">'
