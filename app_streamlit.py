@@ -4,15 +4,16 @@ import base64
 import streamlit.components.v1 as components  # ok if unused
 import pandas as pd
 import os
-from core.google_sheets import load_interactions_df
-import gspread
-from google.oauth2.service_account import Credentials
 
-
+from core.google_sheets import load_interactions_df  # (optional, not used now)
 from core.retrieval import load_services, retrieve_services
 from core.handout_generator import generate_handout
 from core.logger import log_interaction
 from core.pdf_generator import generate_pdf
+
+import gspread
+from google.oauth2.service_account import Credentials
+
 
 # ---------- Load data ----------
 SERVICES_DF = load_services()
@@ -122,7 +123,7 @@ st.markdown(
 
 
 # =====================================================================
-# MODE 1: FRONT DESK TOOL (your existing flow)
+# MODE 1: FRONT DESK TOOL
 # =====================================================================
 if mode == "Front desk tool":
 
@@ -174,7 +175,7 @@ if mode == "Front desk tool":
         selected_needs = []
         cols_per_row = 3
         for i in range(0, len(NEED_OPTIONS), cols_per_row):
-            row = NEED_OPTIONS[i : i + cols_per_row]
+            row = NEED_OPTIONS[i: i + cols_per_row]
             cols = st.columns(len(row))
             for col, opt in zip(cols, row):
                 with col:
@@ -245,7 +246,6 @@ if mode == "Front desk tool":
                 if not kept_services:
                     st.warning("At least one service should be selected.")
                 else:
-                    # Debug: see how many services go into the handout
                     st.write(f"Generating handout for {len(kept_services)} services...")
 
                     handout_text = generate_handout(visitor_context, kept_services)
@@ -338,7 +338,6 @@ if mode == "Front desk tool":
 
         st.write("")
         if st.button("Start new visitor"):
-            # Reset everything and go back to step 1
             st.session_state.clear()
             st.session_state["step"] = "form"
             st.rerun()
@@ -349,58 +348,52 @@ if mode == "Front desk tool":
 # =====================================================================
 else:
     st.subheader("Analytics dashboard – anonymous usage trends")
-    
-        # --- DEBUG: Show what secrets are being read ---
+
+    # --- DEBUG: Show what secrets are being read ---
     try:
-        st.write("Debug service account email:", st.secrets["gcp_service_account"]["client_email"])
+        st.write(
+            "Debug service account email:",
+            st.secrets["gcp_service_account"]["client_email"],
+        )
         st.write("Debug sheet_id:", st.secrets["sheets"]["sheet_id"])
     except Exception as e:
         st.error("Secrets read error:")
         st.code(repr(e))
-    # ------------------------------------------------
-    
-    try:
-        #df = load_interactions_df()
-        # =================================================================
-# DIRECT GOOGLE SHEETS TEST + ANALYTICS
-# =================================================================
+        st.stop()  # cannot continue without secrets
 
-
+    # --- Direct Google Sheets test & load into DataFrame ---
     try:
-        # ---- Build client from service account in secrets ----
         creds_info = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(
             creds_info,
             scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
         client = gspread.authorize(creds)
-    
-        # ---- Extract key from the sheet_id (URL or raw key) ----
+
         raw = st.secrets["sheets"]["sheet_id"].strip()
         if "/d/" in raw:
             key = raw.split("/d/")[1].split("/")[0]
         else:
             key = raw
-    
+
         st.write("DEBUG parsed key:", key)
-    
-        # ---- Open spreadsheet + worksheet directly ----
+
         sh = client.open_by_key(key)
         st.write("DEBUG: opened spreadsheet OK. Title:", sh.title)
-    
+
         ws = sh.worksheet("interactions")
         st.write("DEBUG: worksheet title:", ws.title)
-    
+
         records = ws.get_all_records()
         st.write("DEBUG: rows found:", len(records))
-    
+
         df = pd.DataFrame(records)
-    
+
     except Exception as e:
         st.error("Direct Google Sheets test failed:")
-        st.code(repr(e))  # <--- this will show the REAL gspread error
+        st.code(repr(e))
     else:
-        # ---------- Your existing analytics logic, using df ----------
+        # ---------- Analytics logic using df ----------
         if df.empty:
             st.info(
                 "No interactions have been logged yet. "
@@ -410,12 +403,12 @@ else:
             # Parse timestamps if present
             if "timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    
+
             # Top-level KPIs
             total_interactions = len(df)
             date_min = df["timestamp"].min() if "timestamp" in df.columns else None
             date_max = df["timestamp"].max() if "timestamp" in df.columns else None
-    
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total handouts generated", total_interactions)
@@ -429,99 +422,108 @@ else:
                     "Most recent",
                     date_max.strftime("%Y-%m-%d") if date_max is not None else "N/A",
                 )
-    
+
             st.markdown("---")
-    
+
             # --- Top needs ---
             st.markdown("### Top needs selected")
 
-        if "needs" in df.columns:
-            needs_df = df.copy()
-            needs_df["needs_list"] = needs_df["needs"].fillna("").astype(str).str.split(";")
-            needs_exploded = needs_df.explode("needs_list")
-            needs_exploded = needs_exploded[needs_exploded["needs_list"] != ""]
-
-            if needs_exploded.empty:
-                st.caption("No needs data recorded yet.")
-            else:
-                needs_counts = needs_exploded["needs_list"].value_counts().head(10)
-
-                col_left, col_right = st.columns([2, 1])
-                with col_left:
-                    st.bar_chart(needs_counts)
-                with col_right:
-                    st.write("Top needs (by count):")
-                    st.table(needs_counts.to_frame("count"))
-        else:
-            st.caption("Column 'needs' not found in sheet.")
-
-        st.markdown("---")
-
-        # --- Top services used ---
-        st.markdown("### Top services included in handouts")
-
-        if "service_ids_kept" in df.columns:
-            svc_df = df.copy()
-            svc_df["service_ids_kept_list"] = (
-                svc_df["service_ids_kept"].fillna("").astype(str).str.split(";")
-            )
-            svc_exploded = svc_df.explode("service_ids_kept_list")
-            svc_exploded = svc_exploded[svc_exploded["service_ids_kept_list"] != ""]
-
-            if svc_exploded.empty:
-                st.caption("No services have been logged yet.")
-            else:
-                svc_exploded["service_ids_kept_list"] = pd.to_numeric(
-                    svc_exploded["service_ids_kept_list"], errors="coerce"
+            if "needs" in df.columns:
+                needs_df = df.copy()
+                needs_df["needs_list"] = (
+                    needs_df["needs"].fillna("").astype(str).str.split(";")
                 )
-                svc_exploded = svc_exploded.dropna(subset=["service_ids_kept_list"])
+                needs_exploded = needs_df.explode("needs_list")
+                needs_exploded = needs_exploded[
+                    needs_exploded["needs_list"] != ""
+                ]
 
-                # Map ID -> name using SERVICES_DF
-                id_to_name = {
-                    int(row["id"]): row["name"]
-                    for _, row in SERVICES_DF.iterrows()
-                }
+                if needs_exploded.empty:
+                    st.caption("No needs data recorded yet.")
+                else:
+                    needs_counts = needs_exploded["needs_list"].value_counts().head(10)
 
-                svc_exploded["service_name"] = svc_exploded[
-                    "service_ids_kept_list"
-                ].map(id_to_name)
-                svc_exploded = svc_exploded.dropna(subset=["service_name"])
-
-                svc_counts = svc_exploded["service_name"].value_counts().head(10)
-
-                col_left2, col_right2 = st.columns([2, 1])
-                with col_left2:
-                    st.bar_chart(svc_counts)
-                with col_right2:
-                    st.write("Top services (by count):")
-                    st.table(svc_counts.to_frame("count"))
-        else:
-            st.caption("Column 'service_ids_kept' not found in sheet.")
-
-        st.markdown("---")
-
-        # --- Breakdown by housing or age ---
-        st.markdown("### Context breakdown")
-
-        col_h1, col_h2 = st.columns(2)
-        with col_h1:
-            if "housing_status" in df.columns:
-                st.markdown("**By housing situation**")
-                housing_counts = df["housing_status"].value_counts()
-                st.bar_chart(housing_counts)
+                    col_left, col_right = st.columns([2, 1])
+                    with col_left:
+                        st.bar_chart(needs_counts)
+                    with col_right:
+                        st.write("Top needs (by count):")
+                        st.table(needs_counts.to_frame("count"))
             else:
-                st.caption("Column 'housing_status' not found.")
-        with col_h2:
-            if "age_group" in df.columns:
-                st.markdown("**By age group**")
-                age_counts = df["age_group"].value_counts()
-                st.bar_chart(age_counts)
-            else:
-                st.caption("Column 'age_group' not found.")
+                st.caption("Column 'needs' not found in sheet.")
 
-        # Optional: quick raw preview for debugging
-        st.markdown("#### Raw log preview (first 20 rows)")
-        st.dataframe(df.head(20))
+            st.markdown("---")
+
+            # --- Top services used ---
+            st.markdown("### Top services included in handouts")
+
+            if "service_ids_kept" in df.columns:
+                svc_df = df.copy()
+                svc_df["service_ids_kept_list"] = (
+                    svc_df["service_ids_kept"].fillna("").astype(str).str.split(";")
+                )
+                svc_exploded = svc_df.explode("service_ids_kept_list")
+                svc_exploded = svc_exploded[
+                    svc_exploded["service_ids_kept_list"] != ""
+                ]
+
+                if svc_exploded.empty:
+                    st.caption("No services have been logged yet.")
+                else:
+                    svc_exploded["service_ids_kept_list"] = pd.to_numeric(
+                        svc_exploded["service_ids_kept_list"], errors="coerce"
+                    )
+                    svc_exploded = svc_exploded.dropna(
+                        subset=["service_ids_kept_list"]
+                    )
+
+                    # Map ID -> name using SERVICES_DF
+                    id_to_name = {
+                        int(row["id"]): row["name"]
+                        for _, row in SERVICES_DF.iterrows()
+                    }
+
+                    svc_exploded["service_name"] = svc_exploded[
+                        "service_ids_kept_list"
+                    ].map(id_to_name)
+                    svc_exploded = svc_exploded.dropna(subset=["service_name"])
+
+                    svc_counts = svc_exploded["service_name"].value_counts().head(10)
+
+                    col_left2, col_right2 = st.columns([2, 1])
+                    with col_left2:
+                        st.bar_chart(svc_counts)
+                    with col_right2:
+                        st.write("Top services (by count):")
+                        st.table(svc_counts.to_frame("count"))
+            else:
+                st.caption("Column 'service_ids_kept' not found in sheet.")
+
+            st.markdown("---")
+
+            # --- Breakdown by housing or age ---
+            st.markdown("### Context breakdown")
+
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                if "housing_status" in df.columns:
+                    st.markdown("**By housing situation**")
+                    housing_counts = df["housing_status"].value_counts()
+                    st.bar_chart(housing_counts)
+                else:
+                    st.caption("Column 'housing_status' not found.")
+            with col_h2:
+                if "age_group" in df.columns:
+                    st.markdown("**By age group**")
+                    age_counts = df["age_group"].value_counts()
+                    st.bar_chart(age_counts)
+                else:
+                    st.caption("Column 'age_group' not found.")
+
+            # Optional: quick raw preview for debugging
+            st.markdown("#### Raw log preview (first 20 rows)")
+            st.dataframe(df.head(20))
+
 
 # ---------- Footer on all pages ----------
 st.markdown("---")
