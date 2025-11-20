@@ -304,7 +304,12 @@ if mode == "Front desk tool":
         st.markdown(handout_text)
 
         # PDF generation + download
-        pdf_bytes = generate_pdf(handout_text, vc)
+        # pdf_bytes = generate_pdf(handout_text, vc)
+        pdf_bytes = generate_pdf(
+        handout_text,
+        vc,
+        st.session_state.get("kept_services", []),
+        )
 
         st.download_button(
             label="📄 Download PDF",
