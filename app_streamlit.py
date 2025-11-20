@@ -1,19 +1,19 @@
 import streamlit as st
 from datetime import datetime
 import base64
-import streamlit.components.v1 as components  # ok if unused
 import pandas as pd
+import streamlit.components.v1 as components  # ok if unused
 import os
-
-from core.google_sheets import load_interactions_df  # (optional, not used now)
-from core.retrieval import load_services, retrieve_services
-from core.handout_generator import generate_handout
-from core.logger import log_interaction
-from core.pdf_generator import generate_pdf
 
 import gspread
 from google.oauth2.service_account import Credentials
 
+from core.retrieval import load_services, retrieve_services
+from core.handout_generator import generate_handout
+from core.logger import log_interaction
+from core.pdf_generator import generate_pdf
+# optional old helper – not used now, but you can keep it
+# from core.google_sheets import load_interactions_df
 
 # ---------- Load data ----------
 SERVICES_DF = load_services()
@@ -28,7 +28,6 @@ st.set_page_config(
 if "step" not in st.session_state:
     st.session_state["step"] = "form"   # "form" or "handout"
 
-# for passing data between actions
 defaults = {
     "visitor_context": None,        # final context for handout
     "visitor_context_form": None,   # context used when generating services
@@ -121,7 +120,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # =====================================================================
 # MODE 1: FRONT DESK TOOL
 # =====================================================================
@@ -210,7 +208,6 @@ if mode == "Front desk tool":
                     st.session_state["review_ready"] = False
                     st.session_state["services_for_review"] = []
                 else:
-                    # store for later runs
                     st.session_state["review_ready"] = True
                     st.session_state["services_for_review"] = services
                     st.session_state["visitor_context_form"] = visitor_context
@@ -251,13 +248,11 @@ if mode == "Front desk tool":
                     handout_text = generate_handout(visitor_context, kept_services)
                     log_interaction(visitor_context, kept_services, removed_ids)
 
-                    # store for step 2
                     st.session_state["visitor_context"] = visitor_context
                     st.session_state["kept_services"] = kept_services
                     st.session_state["removed_ids"] = removed_ids
                     st.session_state["handout_text"] = handout_text
 
-                    # reset review flag and move to handout step
                     st.session_state["review_ready"] = False
                     st.session_state["services_for_review"] = []
                     st.session_state["step"] = "handout"
@@ -269,7 +264,6 @@ if mode == "Front desk tool":
         vc = st.session_state["visitor_context"]
         handout_text = st.session_state["handout_text"]
 
-        # current date/time (local)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         st.markdown("### Handout ready")
@@ -287,13 +281,9 @@ if mode == "Front desk tool":
         st.markdown("### Handout text (formatted)")
         st.markdown(handout_text)
 
-        # ----- PDF generation -----
         pdf_bytes = generate_pdf(handout_text, vc)
-
-        # Debug so we know this ran
         st.write(f"PDF generated with size: **{len(pdf_bytes)} bytes**")
 
-        # Download button (always reliable)
         st.download_button(
             label="📄 Download PDF",
             data=pdf_bytes,
@@ -301,7 +291,6 @@ if mode == "Front desk tool":
             mime="application/pdf",
         )
 
-        # Best-effort inline preview
         try:
             b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
             pdf_iframe = f"""
@@ -313,7 +302,6 @@ if mode == "Front desk tool":
                     type="application/pdf"
                 ></iframe>
             """
-
             st.markdown("### Preview & print (may be hidden by some browser settings)")
             st.markdown(pdf_iframe, unsafe_allow_html=True)
         except Exception as e:
@@ -342,26 +330,23 @@ if mode == "Front desk tool":
             st.session_state["step"] = "form"
             st.rerun()
 
-
 # =====================================================================
 # MODE 2: ANALYTICS DASHBOARD (from Google Sheets)
 # =====================================================================
 else:
     st.subheader("Analytics dashboard – anonymous usage trends")
 
-    # --- DEBUG: Show what secrets are being read ---
+    # ---- Debug: show what we think the secrets are ----
     try:
-        st.write(
-            "Debug service account email:",
-            st.secrets["gcp_service_account"]["client_email"],
-        )
-        st.write("Debug sheet_id:", st.secrets["sheets"]["sheet_id"])
+        svc_email = st.secrets["gcp_service_account"]["client_email"]
+        raw_sheet_id = st.secrets["sheets"]["sheet_id"]
+        st.write("Debug service account email:", svc_email)
+        st.write("Debug sheet_id (raw):", raw_sheet_id)
     except Exception as e:
-        st.error("Secrets read error:")
+        st.error("Secrets read error (gcp_service_account / sheets.sheet_id):")
         st.code(repr(e))
-        st.stop()  # cannot continue without secrets
 
-    # --- Direct Google Sheets test & load into DataFrame ---
+    # ---- Connect to Google Sheets directly ----
     try:
         creds_info = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(
@@ -372,43 +357,16 @@ else:
 
         raw = st.secrets["sheets"]["sheet_id"].strip()
 
-        # NEW: handle both full URL and bare key
         if raw.startswith("http"):
             st.write("DEBUG: treating sheet_id as URL")
             sh = client.open_by_url(raw)
-            key = "opened_by_url"
+            key_display = "opened_by_url"
         else:
             st.write("DEBUG: treating sheet_id as bare key")
-            key = raw
-            sh = client.open_by_key(key)
+            sh = client.open_by_key(raw)
+            key_display = raw
 
-        st.write("DEBUG parsed key / mode:", key)
-        st.write("DEBUG: opened spreadsheet OK. Title:", sh.title)
-
-        ws = sh.worksheet("interactions")
-        st.write("DEBUG: worksheet title:", ws.title)
-
-        records = ws.get_all_records()
-        st.write("DEBUG: rows found:", len(records))
-
-        df = pd.DataFrame(records)
-    try:
-        creds_info = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(
-            creds_info,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        client = gspread.authorize(creds)
-
-        raw = st.secrets["sheets"]["sheet_id"].strip()
-        if "/d/" in raw:
-            key = raw.split("/d/")[1].split("/")[0]
-        else:
-            key = raw
-
-        st.write("DEBUG parsed key:", key)
-
-        sh = client.open_by_key(key)
+        st.write("DEBUG parsed key / mode:", key_display)
         st.write("DEBUG: opened spreadsheet OK. Title:", sh.title)
 
         ws = sh.worksheet("interactions")
@@ -430,11 +388,9 @@ else:
                 "As front desk staff generate handouts, data will appear here."
             )
         else:
-            # Parse timestamps if present
             if "timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-            # Top-level KPIs
             total_interactions = len(df)
             date_min = df["timestamp"].min() if "timestamp" in df.columns else None
             date_max = df["timestamp"].max() if "timestamp" in df.columns else None
@@ -460,13 +416,9 @@ else:
 
             if "needs" in df.columns:
                 needs_df = df.copy()
-                needs_df["needs_list"] = (
-                    needs_df["needs"].fillna("").astype(str).str.split(";")
-                )
+                needs_df["needs_list"] = needs_df["needs"].fillna("").astype(str).str.split(";")
                 needs_exploded = needs_df.explode("needs_list")
-                needs_exploded = needs_exploded[
-                    needs_exploded["needs_list"] != ""
-                ]
+                needs_exploded = needs_exploded[needs_exploded["needs_list"] != ""]
 
                 if needs_exploded.empty:
                     st.caption("No needs data recorded yet.")
@@ -493,9 +445,7 @@ else:
                     svc_df["service_ids_kept"].fillna("").astype(str).str.split(";")
                 )
                 svc_exploded = svc_df.explode("service_ids_kept_list")
-                svc_exploded = svc_exploded[
-                    svc_exploded["service_ids_kept_list"] != ""
-                ]
+                svc_exploded = svc_exploded[svc_exploded["service_ids_kept_list"] != ""]
 
                 if svc_exploded.empty:
                     st.caption("No services have been logged yet.")
@@ -503,11 +453,8 @@ else:
                     svc_exploded["service_ids_kept_list"] = pd.to_numeric(
                         svc_exploded["service_ids_kept_list"], errors="coerce"
                     )
-                    svc_exploded = svc_exploded.dropna(
-                        subset=["service_ids_kept_list"]
-                    )
+                    svc_exploded = svc_exploded.dropna(subset=["service_ids_kept_list"])
 
-                    # Map ID -> name using SERVICES_DF
                     id_to_name = {
                         int(row["id"]): row["name"]
                         for _, row in SERVICES_DF.iterrows()
@@ -550,10 +497,8 @@ else:
                 else:
                     st.caption("Column 'age_group' not found.")
 
-            # Optional: quick raw preview for debugging
             st.markdown("#### Raw log preview (first 20 rows)")
             st.dataframe(df.head(20))
-
 
 # ---------- Footer on all pages ----------
 st.markdown("---")
