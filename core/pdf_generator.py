@@ -136,14 +136,11 @@ def generate_pdf(
             category = svc.get("category", "")
             icon = category_icon(category)
 
-            # Title line
             title_line = f"{icon}  {name}"
 
-            # --- Draw card background ---
             pdf.set_draw_color(210, 210, 210)
             pdf.set_line_width(0.4)
 
-            # Title block
             pdf.set_fill_color(*BRAND_LIGHT_GREY)
             pdf.set_x(left_margin)
             pdf.multi_cell(
@@ -154,7 +151,6 @@ def generate_pdf(
                 fill=True,
             )
 
-            # Body block
             pdf.set_x(left_margin)
             body_lines = []
             if desc:
@@ -164,7 +160,6 @@ def generate_pdf(
             if address:
                 body_lines.append(f"Where: {address}")
 
-            # cleaner layout + more padding
             body_text = "\n".join(body_lines)
             if body_text:
                 pdf.multi_cell(
@@ -175,10 +170,9 @@ def generate_pdf(
                     fill=False,
                 )
 
-            pdf.ln(3)  # spacing between cards
+            pdf.ln(3)
 
     else:
-        # Fallback: full text
         pdf.set_xy(left_margin, pdf.get_y())
         pdf.multi_cell(usable_width, 7, to_latin1(handout_text or ""))
 
@@ -188,8 +182,16 @@ def generate_pdf(
         pdf.set_font("Helvetica", size=11)
         pdf.multi_cell(usable_width, 6, to_latin1(closing))
 
-    # Return bytearray safely
+    # ----------- FIXED RETURN BLOCK -----------
     out = pdf.output(dest="S")
-    if isinstance(out, bytearray):
+
+    # FPDF (older) returns string → encode to bytes
+    if isinstance(out, str):
+        out = out.encode("latin-1")
+
+    # fpdf2 returns bytearray sometimes
+    elif isinstance(out, bytearray):
         out = bytes(out)
+
+    # now always bytes
     return out
