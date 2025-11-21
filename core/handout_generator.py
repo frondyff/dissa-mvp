@@ -76,3 +76,33 @@ IMPORTANT RULES:
 """
 
     return context_str + services_str + "\n" + instructions
+
+
+def generate_handout(visitor_context: Dict, services: List[Dict]) -> str:
+    """
+    Main function used by Streamlit:
+    - Builds the LLM prompt from visitor_context + services
+    - Calls Groq to generate the handout text
+    - Returns the final handout string
+    """
+    prompt = build_handout_prompt(visitor_context, services)
+
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",  # adjust model name if needed
+        messages=[
+            {
+                "role": "system",
+                "content": "You write simple, kind service handouts for visitors.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0.4,
+        max_tokens=800,
+    )
+
+    return completion.choices[0].message.content.strip()
