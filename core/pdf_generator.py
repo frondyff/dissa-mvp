@@ -145,7 +145,7 @@ def draw_service_card(pdf: HandoutPDF, left_margin: int, usable_width: int, svc:
     pdf.ln(4)
 
 
-def generate_pdf(
+def generate_handout(
     handout_text: str,
     visitor_context: Dict,
     services: Optional[List[Dict]] = None,
