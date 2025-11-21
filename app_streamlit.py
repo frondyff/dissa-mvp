@@ -7,7 +7,7 @@ import streamlit as st
 from google.oauth2.service_account import Credentials
 
 from core.retrieval import load_services, retrieve_services
-from core.handout_generator import generate_handout
+from core.handout_generator import generate_pdf
 from core.logger import log_interaction
 from core.pdf_generator import generate_pdf
 
